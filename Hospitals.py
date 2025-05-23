@@ -46,7 +46,7 @@ def render_map(lat, lon, hospitals):
     return m
 
 get_browser_location()
-msg = st.query_params().get("msg", [None])[0]
+msg = st.query_params.get("msg")
 if msg:
     try:
         lat, lon = map(float, msg.split(","))
