@@ -2,8 +2,11 @@
 import streamlit as st
 import streamlit.components.v1 as components
 import requests
+import folium
+from streamlit_folium import st_folium
 
-GOOGLE_API_KEY = "YOUR_GOOGLE_PLACES_API_KEY"
+st.set_page_config(page_title="Nearby Hospitals (Free)", layout="centered")
+st.title("Nearby Hospitals (No API Key)")
 
 def get_browser_location():
     js = """
@@ -18,39 +21,45 @@ def get_browser_location():
     """
     components.html(js, height=0)
 
-def fetch_hospitals(lat, lon):
-    url = (
-        f"https://maps.googleapis.com/maps/api/place/nearbysearch/json"
-        f"?location={lat},{lon}&radius=5000&type=hospital&key={GOOGLE_API_KEY}"
-    )
-    response = requests.get(url)
+def query_hospitals(lat, lon):
+    query = f"""
+[out:json];
+(
+  node["amenity"="hospital"](around:5000,{lat},{lon});
+  way["amenity"="hospital"](around:5000,{lat},{lon});
+  relation["amenity"="hospital"](around:5000,{lat},{lon});
+);
+out center;
+"""
+    response = requests.post("https://overpass-api.de/api/interpreter", data={"data": query})
     return response.json()
 
-def main():
-    st.set_page_config(page_title="Nearby Hospitals", layout="centered")
-    st.title("Find Nearest Hospitals")
-    get_browser_location()
+def render_map(lat, lon, hospitals):
+    m = folium.Map(location=[lat, lon], zoom_start=13)
+    folium.Marker([lat, lon], tooltip="You are here", icon=folium.Icon(color="blue")).add_to(m)
+    for el in hospitals.get("elements", []):
+        name = el.get("tags", {}).get("name", "Unnamed Hospital")
+        if el.get("lat") and el.get("lon"):
+            folium.Marker([el["lat"], el["lon"]], tooltip=name, icon=folium.Icon(color="red")).add_to(m)
+        elif "center" in el:
+            folium.Marker([el["center"]["lat"], el["center"]["lon"]], tooltip=name, icon=folium.Icon(color="red")).add_to(m)
+    return m
 
-    msg = st.experimental_get_query_params().get("msg", [None])[0]
-    if msg:
-        try:
-            lat, lon = map(str.strip, msg.split(","))
-            st.success(f"Your Location: {lat}, {lon}")
-            results = fetch_hospitals(lat, lon)
-
-            if "results" in results:
-                st.write("**Nearby Hospitals:**")
-                for hospital in results["results"]:
-                    name = hospital.get("name", "Unknown")
-                    address = hospital.get("vicinity", "")
-                    gmap_link = f"https://www.google.com/maps/search/?api=1&query={hospital['geometry']['location']['lat']},{hospital['geometry']['location']['lng']}"
-                    st.markdown(f"**{name}**  \n{address}  \n[View on Map]({gmap_link})")
-            else:
-                st.warning("No hospitals found.")
-        except Exception as e:
-            st.error("Error parsing location or fetching hospitals.")
-    else:
-        st.info("Please allow location access in your browser.")
-
-if __name__ == "__main__":
-    main()
+get_browser_location()
+msg = st.experimental_get_query_params().get("msg", [None])[0]
+if msg:
+    try:
+        lat, lon = map(float, msg.split(","))
+        st.success(f"Your Location: {lat}, {lon}")
+        st.write("Searching for nearby hospitals...")
+        hospitals = query_hospitals(lat, lon)
+        if hospitals.get("elements"):
+            st.write(f"**Found {len(hospitals['elements'])} hospitals nearby.**")
+            m = render_map(lat, lon, hospitals)
+            st_folium(m, width=700, height=500)
+        else:
+            st.warning("No hospitals found nearby.")
+    except Exception as e:
+        st.error("Failed to parse location or fetch hospital data.")
+else:
+    st.info("Please allow location access in your browser.")
